@@ -8,8 +8,6 @@
 
 #include <linux/proc_fs.h>
 
-MODULE_LICENSE("GPL");
-
 struct proc_dir_entry *proc_tree_root;
 
 
@@ -27,18 +25,20 @@ static const struct file_operations proc_tree_file_operations = {
 
 
 /* startup and shutdown */
-int proc_tree_init(void)
+void __init proc_tree_init(void)
 {
 	proc_tree_root = proc_mkdir("tree", NULL);
 	
 	proc_tree_root->proc_fops = &proc_tree_file_operations;
 	return 0;
 }
-module_init(proc_tree_init);
+//module_init(proc_tree_init);
 
+/*
 void proc_tree_cleanup(void)
 {
 	remove_proc_entry("tree", NULL);
 }
 module_exit(proc_tree_cleanup);
+*/
 
