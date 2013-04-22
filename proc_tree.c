@@ -11,15 +11,70 @@
 
 MODULE_LICENSE("GPL");
 
+static struct proc_dir_entry *proc_tree_file;
+
 /* macros based on the next_task macro */
 #define child_task(p)	list_entry((p)->children.next, struct task_struct, children)
 
-#define PROC_TREE_OUTPUT_SIZE 4096
 
-static struct proc_dir_entry *proc_tree_file;
-/*char *proc_tree_output; */
-char proc_tree_output[PROC_TREE_OUTPUT_SIZE];
+/* Output functions */
+char *proc_tree_output = NULL;
+//char proc_tree_output[PROC_TREE_OUTPUT_SIZE];
+int proc_tree_output_size = 0;
 int proc_tree_output_size_used = 1;
+
+
+void proc_tree_clear_output(void) {
+	if (proc_tree_output != NULL) {
+		kfree(proc_tree_output);
+	}
+	proc_tree_output_size = 1024;
+	proc_tree_output = kmalloc(proc_tree_output_size, GFP_KERNEL);
+	proc_tree_output_size_used = 1;
+}
+
+/**
+ * Append a string to the module's output buffer.  Increase the size if it
+ * isn't big enough.
+ * @string
+ */
+void proc_tree_add_output(const char *string) {
+	char *new_output;
+	int len = strlen(string);
+
+	if (len + proc_tree_output_size_used >= proc_tree_output_size) {
+		// buffer wasn't big enough, double it it.
+		proc_tree_output_size *= 2;
+		new_output = krealloc(proc_tree_output, proc_tree_output_size, GFP_KERNEL);
+		if (new_output == NULL) {
+			printk("Failed to allocate memory for proc_tree output.\n");
+			return;
+		}
+		proc_tree_output = new_output;
+	}
+
+	strcat(proc_tree_output, string);
+	proc_tree_output_size_used += len;
+}
+
+/**
+ * Generate a string from the task info.  Prepend something looking like
+ * a tree based on how far down in the heirarchy it is.
+ * @task: process to describe.
+ * @depth: how far down in the heirarchy it is.
+ */
+void proc_tree_format_output(struct task_struct *task, int depth) {
+	int n;
+	char buffer[1024];
+	snprintf(buffer, 1023, "[%d] %s\n", task->pid, task->comm);
+
+	// create tree structure based on depth
+	for (n = 0; n < depth; n++) {
+		proc_tree_add_output("|- ");
+	}
+
+	proc_tree_add_output(buffer);
+}
 
 
 /* structures and functions to hold a heirarchical task list */
@@ -163,8 +218,8 @@ void proc_tree_walk_list(void) {
 
 	while (entry != NULL) {
 		task = entry->task;
-		printk("(%d) %d: %s\n", depth, task->pid, task->comm);
-
+		//printk("(%d) %d: %s\n", depth, task->pid, task->comm);
+		proc_tree_format_output(task, depth);
 		if (entry->first_child != NULL) {
 			// process children.
 			depth++;
@@ -189,39 +244,6 @@ void proc_tree_walk_list(void) {
 }
 
 
-void proc_tree_clear_output(void) {
-	/*
-	kfree(proc_tree_output);
-	proc_tree_output_size = 4096;
-	proc_tree_output = kmalloc(proc_tree_output_size, GFP_KERNEL);
-	proc_tree_output_size_used = 1;
-	*/
-	proc_tree_output[0] = '\0';
-	proc_tree_output_size_used = 1;
-}
-
-void proc_tree_add_output(const char *string) {
-	if (strlen(string) + proc_tree_output_size_used 
-			>= PROC_TREE_OUTPUT_SIZE) {
-		/* not handling this yet */
-		return;
-	}
-	strcat(proc_tree_output, string);
-}
-
-void proc_tree_format_output(struct task_struct *task, int depth) {
-	int n;
-	char buffer[1024];
-	snprintf(buffer, 1023, "%d: %s\n", task->pid, task->comm);
-
-	/* create tree structure based on depth */
-	for (n = 0; n < depth; n++) {
-		proc_tree_add_output("|-");
-	}
-
-	proc_tree_add_output(buffer);
-}
-
 
 int proc_tree_read(char *buffer, char **buffer_location, off_t offset, 
 		int buffer_length, int *eof, void *data)
@@ -230,8 +252,15 @@ int proc_tree_read(char *buffer, char **buffer_location, off_t offset,
 	int ret;
 
 	if (offset > 0) {
-		/* we have finished reading, return 0 */
-		ret = 0;
+		const char *output = proc_tree_output + offset;
+
+		strncpy(buffer, output, buffer_length - 1);
+		ret = strlen(buffer);
+
+		if (ret == 0) {
+			/* we have finished reading, clear output */
+			proc_tree_clear_output();
+		}
 	}
 	else {
 		// go through all processes, store in the heirarchical struct.
@@ -241,7 +270,8 @@ int proc_tree_read(char *buffer, char **buffer_location, off_t offset,
 		proc_tree_walk_list();
 		proc_tree_clear_list();
 
-		ret = 0;
+		strncpy(buffer, proc_tree_output, buffer_length - 1);
+		ret = strlen(buffer);
 	}
 
 	return ret;
@@ -253,6 +283,8 @@ int proc_tree_init(void)
 {
 	proc_tree_file = create_proc_entry("tree", 0644, NULL);
 	proc_tree_file->read_proc = proc_tree_read;
+
+	proc_tree_clear_output();
 	return 0;
 }
 module_init(proc_tree_init);
